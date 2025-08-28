@@ -1,0 +1,11 @@
+# .gitignore
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+data/*.pdf
+outputs/
+.DS_Store
+*.log
