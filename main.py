@@ -1,252 +1,197 @@
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 import os
-import requests
 import uuid
 from datetime import datetime
+from crewai import Crew, Process
+from agents import market_researcher, financial_analyst, verifier
+from task import market_research_task, analyze_financial_document, verification
 from tools import FinancialDocumentTool
 
-app = FastAPI(title="Financial Document Analyzer - Enhanced Models", version="2.0.0")
+app = FastAPI(
+    title="Enhanced Financial Document Analyzer - CrewAI Multi-Agent System", 
+    version="3.0.0",
+    description="Professional financial document analysis using CrewAI multi-agent system with real-time market research"
+)
 
-def call_huggingface_api(prompt: str, content: str) -> str:
-    """Enhanced HF API with better financial models"""
+def run_financial_crew(query: str, file_path: str):
+    """Run the complete CrewAI workflow with market research and document analysis"""
+    
     try:
-        hf_token = os.getenv("HF_TOKEN")
-        if not hf_token:
-            return "HF_TOKEN not configured"
+        # Create the financial analysis crew
+        financial_crew = Crew(
+            agents=[market_researcher, financial_analyst, verifier],
+            tasks=[market_research_task, analyze_financial_document, verification],
+            process=Process.sequential,
+            verbose=True,
+            memory=False  # Changed from True to False
+        )
         
-        headers = {"Authorization": f"Bearer {hf_token}"}
+        # Execute the crew with context
+        inputs = {
+            'query': query,
+            'file_path': file_path
+        }
         
-        # 🚀 Enhanced model list with specialized financial models
-        enhanced_models = [
-            # Tier 1: High-performance models
-            "openai/gpt-oss-120b",           # Best: 120B OpenAI model
-            "openai/gpt-oss-20b",            # Good: Lighter OpenAI model
-            
-            # Tier 2: Financial specialists  
-            "ProsusAI/finbert",              # Financial sentiment expert
-            "yiyanghkust/finbert-tone",      # Financial tone analysis
-            
-            # Tier 3: Reliable fallbacks
-            "microsoft/DialoGPT-medium",     # Better conversational
-            "microsoft/DialoGPT-small",      # Smaller but reliable
-            "gpt2",                          # Always available
-            "distilgpt2"                     # Fastest fallback
-        ]
+        result = financial_crew.kickoff(inputs)
+        return result
         
-        for model in enhanced_models:
-            try:
-                api_url = f"https://api-inference.huggingface.co/models/{model}"
-                
-                # 🎯 Enhanced prompt for financial analysis
-                if "finbert" in model.lower():
-                    # Special handling for FinBERT models
-                    simplified_prompt = f"Financial Analysis: {content[:1000]}"
-                elif "gpt-oss" in model:
-                    # Enhanced prompt for GPT-OSS models
-                    simplified_prompt = f"""# Financial Document Analysis
-
-Query: {prompt}
-
-Document Analysis Required:
-{content[:2000]}
-
-Provide comprehensive analysis including:
-1. Investment recommendation (BUY/SELL/HOLD) with rationale
-2. Risk assessment (LOW/MEDIUM/HIGH) with factors
-3. Key financial insights and metrics
-4. Market outlook and recommendations
-
-Reasoning Level: High
-Analysis Depth: Comprehensive"""
-                else:
-                    # Standard prompt for other models
-                    simplified_prompt = f"""Analyze this financial document:
-
-{prompt}
-
-Document excerpt: {content[:1500]}
-
-Provide:
-1. Investment recommendation (BUY/SELL/HOLD)
-2. Risk level (LOW/MEDIUM/HIGH) 
-3. Key financial insights"""
-                
-                # 📊 Model-specific parameters
-                if "gpt-oss" in model:
-                    payload = {
-                        "inputs": simplified_prompt,
-                        "parameters": {
-                            "max_new_tokens": 500,
-                            "temperature": 0.3,
-                            "top_p": 0.9,
-                            "do_sample": True,
-                            "return_full_text": False
-                        }
-                    }
-                else:
-                    payload = {
-                        "inputs": simplified_prompt,
-                        "parameters": {
-                            "max_new_tokens": 300,
-                            "temperature": 0.7,
-                            "return_full_text": False
-                        }
-                    }
-                
-                response = requests.post(api_url, headers=headers, json=payload, timeout=45)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    if isinstance(result, list) and len(result) > 0:
-                        generated_text = result[0].get('generated_text', '')
-                        if generated_text and len(generated_text.strip()) > 10:
-                            return f"""
-# 🤖 Enhanced AI Financial Analysis (Model: {model})
-
-{generated_text}
-
----
-
-## 📈 Analysis Enhancement Details:
-- **Model Used:** {model} ({"Financial Specialist" if "finbert" in model else "Advanced GPT" if "gpt-oss" in model else "General LLM"})
-- **Model Size:** {"120B parameters" if "120b" in model else "20B parameters" if "20b" in model else "Optimized for finance" if "finbert" in model else "Standard"}
-- **API Status:** ✅ Working with enhanced models
-- **Content Processed:** {len(content):,} characters
-- **Analysis Quality:** {"Expert-level" if any(x in model for x in ["gpt-oss", "finbert"]) else "Professional"}
-
-### 🎯 Model Capabilities:
-{"- Advanced reasoning and function calling" if "gpt-oss" in model else ""}
-{"- Specialized financial sentiment analysis" if "finbert" in model else ""}
-{"- Professional investment recommendations" if any(x in model for x in ["gpt-oss", "finbert"]) else ""}
-"""
-                        
-            except Exception as e:
-                continue  # Try next model
-        
-        # Enhanced fallback analysis
-        return f"""
-# 📊 Enhanced Financial Document Analysis Report
-
-## Query: {prompt}
-
-## 🎯 Professional Analysis Results:
-Based on comprehensive document analysis ({len(content):,} characters processed):
-
-### Investment Assessment:
-- **Document Quality:** Excellent - Professional financial data successfully extracted
-- **Investment Recommendation:** HOLD - Balanced risk-reward profile identified
-- **Risk Level:** MEDIUM - Standard corporate financial risk with growth potential
-- **Confidence Level:** High - Comprehensive data available for analysis
-
-### 📈 Key Financial Insights:
-- **Revenue Indicators:** Multiple revenue streams identified in document
-- **Profitability Metrics:** Earnings performance data successfully processed  
-- **Growth Potential:** Document suggests stable to moderate growth trajectory
-- **Market Position:** Professional financial reporting indicates established entity
-
-### 🔍 Advanced Technical Analysis:
-- **Document Structure:** Professional-grade financial reporting format
-- **Data Completeness:** Comprehensive financial information available
-- **Compliance Indicators:** Standard regulatory reporting format detected
-- **Analysis Readiness:** Suitable for detailed quantitative investment analysis
-
-### 💡 Investment Strategy Recommendations:
-1. **Conservative Approach:** 5-10% portfolio allocation recommended
-2. **Moderate Risk:** 10-15% allocation with regular monitoring
-3. **Growth Focus:** Consider for long-term hold positions
-4. **Risk Management:** Implement stop-loss at 8-10% decline
-
-## 🚀 System Enhancement Status:
-- **Enhanced Models:** Attempted connection to GPT-OSS-120B and FinBERT specialists  
-- **Fallback Analysis:** Advanced rule-based financial assessment activated
-- **Processing Capability:** Successfully handled large document ({len(content):,} characters)
-- **Professional Standards:** Regulatory-compliant analysis methodology
-
-*Note: This enhanced system demonstrates upgraded model integration with professional-grade financial analysis capabilities. API connectivity will provide even deeper insights when models are available.*
-"""
-            
     except Exception as e:
-        return f"Enhanced API system error: {str(e)}"
+        raise Exception(f"CrewAI execution error: {str(e)}")
 
 @app.get("/")
 async def root():
+    """API information and health check"""
     return {
-        "message": "🚀 Enhanced Financial Document Analyzer - Premium Models",
-        "status": "✅ All Bugs Fixed + Premium AI Integration",
-        "enhanced_models": [
-            "🏆 OpenAI GPT-OSS-120B (120B parameters)",
-            "⭐ OpenAI GPT-OSS-20B (20B parameters)", 
-            "💰 ProsusAI/FinBERT (Financial specialist)",
-            "📊 FinBERT-Tone (Sentiment analysis)",
-            "🔄 Microsoft DialoGPT (Conversational)",
-            "⚡ GPT-2 variants (Fast fallbacks)"
+        "message": "🚀 Enhanced Financial Document Analyzer - CrewAI Multi-Agent System",
+        "status": "✅ Fully Operational",
+        "version": "3.0.0",
+        "features": [
+            "🤖 Multi-Agent CrewAI System (3 specialized agents)",
+            "🔍 Real-time Market Research with SerperDevTool",
+            "🧠 Free Hugging Face LLM Integration (Llama-3.2-3B)",
+            "📊 Comprehensive Financial Document Analysis",
+            "✅ Document Verification & Quality Control",
+            "💰 100% Free Tier Compatible"
         ],
-        "capabilities": [
-            "🧠 Advanced reasoning with GPT-OSS models",
-            "💹 Specialized financial sentiment analysis",
-            "📈 Professional investment recommendations", 
-            "⚠️ Comprehensive risk assessment",
-            "🎯 Multi-tier model fallback system"
+        "agents": [
+            {
+                "name": "Market Research Specialist",
+                "role": "Gathers current market data and economic indicators"
+            },
+            {
+                "name": "Senior Financial Analyst", 
+                "role": "Combines document analysis with market research"
+            },
+            {
+                "name": "Document Verifier",
+                "role": "Quality control and validation of analysis"
+            }
+        ],
+        "endpoints": [
+            {
+                "path": "/analyze",
+                "method": "POST", 
+                "description": "Upload PDF and get comprehensive financial analysis"
+            }
         ]
     }
 
 @app.post("/analyze")
-async def enhanced_analyze(
-    file: UploadFile = File(...),
-    query: str = Form(default="Provide comprehensive financial analysis with investment recommendations")
+async def analyze_financial_document_endpoint(
+    file: UploadFile = File(..., description="PDF financial document to analyze"),
+    query: str = Form(
+        default="Provide comprehensive financial analysis with current market context and investment recommendations",
+        description="Specific analysis question or request"
+    )
 ):
-    """Enhanced financial analysis with premium models"""
+    """
+    Enhanced financial analysis with CrewAI multi-agent system
     
+    Uploads a PDF financial document and returns comprehensive analysis including:
+    - Market research and current trends
+    - Detailed financial metrics analysis
+    - Investment recommendations
+    - Risk assessment
+    - Document verification
+    """
+    
+    # Validate file type
     if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files supported")
+        raise HTTPException(
+            status_code=400, 
+            detail="Only PDF files are supported. Please upload a PDF document."
+        )
     
+    # Generate unique file ID
     file_id = str(uuid.uuid4())
     file_path = f"data/financial_document_{file_id}.pdf"
     
     try:
+        # Ensure data directory exists
         os.makedirs("data", exist_ok=True)
         
+        # Save uploaded file
         content = await file.read()
         with open(file_path, "wb") as f:
             f.write(content)
         
-        # Extract PDF content 
-        doc_tool = FinancialDocumentTool()
-        pdf_content = doc_tool.read_data_tool(file_path)
+        # Validate query
+        if not query or query.strip() == "":
+            query = "Provide comprehensive financial analysis with current market context and investment recommendations"
         
-        # Enhanced analysis with better models
-        analysis = call_huggingface_api(query, pdf_content)
+        # Extract PDF content for preview (optional)
+        doc_tool = FinancialDocumentTool()
+        pdf_preview = doc_tool.read_data_tool(file_path)
+        
+        # Run the CrewAI workflow
+        print(f"Starting CrewAI analysis for query: {query}")
+        analysis_result = run_financial_crew(query.strip(), file_path)
         
         return {
-            "status": "✅ SUCCESS - Enhanced AI Analysis Complete",
+            "status": "✅ SUCCESS - CrewAI Multi-Agent Analysis Complete",
             "timestamp": datetime.now().isoformat(),
             "query": query,
             "file_processed": file.filename,
-            "analysis": analysis,
-            "enhancement_features": {
-                "premium_models": "✅ GPT-OSS-120B, FinBERT specialists attempted",
-                "advanced_reasoning": "✅ High-level analysis capability",
-                "financial_specialization": "✅ Finance-tuned model integration",
-                "multi_tier_fallback": "✅ 8-model redundancy system",
-                "professional_output": "✅ Investment-grade recommendations"
+            "file_size_mb": round(len(content) / (1024*1024), 2),
+            "analysis": str(analysis_result),
+            "system_details": {
+                "framework": "CrewAI Multi-Agent System",
+                "agents_executed": [
+                    "Market Research Specialist",
+                    "Senior Financial Analyst", 
+                    "Document Verifier"
+                ],
+                "tools_integrated": [
+                    "SerperDevTool (Web Search)",
+                    "FinancialDocumentTool (PDF Reader)"
+                ],
+                "llm_model": "Hugging Face Llama-3.2-3B-Instruct",
+                "process_type": "Sequential Agent Workflow",
+                "features": [
+                    "Real-time market research",
+                    "Document analysis", 
+                    "Quality verification",
+                    "Investment recommendations"
+                ]
             },
-            "technical_metrics": {
-                "characters_processed": len(pdf_content),
-                "file_size_mb": round(len(content) / (1024*1024), 2),
-                "processing_time": "< 2 seconds",
-                "model_tier": "Premium with intelligent fallback"
+            "processing_metrics": {
+                "pdf_pages_processed": len(content) // 2000,  # Rough estimate
+                "characters_in_document": len(pdf_preview) if 'Error' not in pdf_preview else 0,
+                "agents_executed": 3,
+                "tasks_completed": 3,
+                "total_cost": "$0.00 (Free Tier)",
+                "processing_time": "Variable (depends on document complexity)"
             }
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Enhanced processing error: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Analysis processing error: {str(e)}"
+        )
+    
     finally:
+        # Clean up uploaded file
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
-            except:
-                pass
+            except Exception as cleanup_error:
+                print(f"Warning: Could not cleanup file {file_path}: {cleanup_error}")
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "service": "Financial Document Analyzer",
+        "version": "3.0.0"
+    }
 
 if __name__ == "__main__":
     import uvicorn
+    print("🚀 Starting Enhanced Financial Document Analyzer...")
+    print("📊 CrewAI Multi-Agent System Ready!")
+    print("🔍 Market Research & Document Analysis Available")
+    print("💰 Running on Free Tier (HuggingFace + Serper)")
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
