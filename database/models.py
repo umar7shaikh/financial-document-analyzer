@@ -11,7 +11,7 @@ class AnalysisModel:
             INSERT INTO financial_analyses 
             (job_id, user_id, document_path, document_name, status)
             VALUES (%s, %s, %s, %s, 'pending')
-            RETURNING analysis_id, job_id
+            RETURNING id, job_id
         """
         
         with db_manager.get_db_connection() as conn:
@@ -26,7 +26,7 @@ class AnalysisModel:
         """Update job status (pending -> processing -> completed/failed)"""
         query = """
             UPDATE financial_analyses 
-            SET status = %s, error_message = %s, updated_at = CURRENT_TIMESTAMP
+            SET status = %s, error_message = %s
             WHERE job_id = %s
         """
         
@@ -38,7 +38,7 @@ class AnalysisModel:
     
     @staticmethod
     def store_complete_analysis(job_id, analysis_data, processing_duration):
-        """Store the COMPLETE analysis results (this prevents truncation!)"""
+        """Store the COMPLETE analysis results"""
         query = """
             UPDATE financial_analyses 
             SET 
@@ -51,8 +51,7 @@ class AnalysisModel:
                 confidence_rating = %s,
                 status = 'completed',
                 processing_duration = %s,
-                completed_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
+                completed_at = CURRENT_TIMESTAMP
             WHERE job_id = %s
         """
         
@@ -64,7 +63,7 @@ class AnalysisModel:
                     analysis_data.get('investment_recommendation', ''),
                     analysis_data.get('risk_assessment', ''),
                     analysis_data.get('verification_report', ''),
-                    analysis_data.get('full_report', ''),  # Complete untruncated version!
+                    analysis_data.get('full_report', ''),
                     analysis_data.get('confidence_rating', ''),
                     processing_duration,
                     job_id
