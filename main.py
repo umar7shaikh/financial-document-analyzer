@@ -7,6 +7,7 @@ from datetime import datetime
 
 # Add database imports
 from database.models import AnalysisModel
+from database.connection import engine, Base
 
 # Import your existing functions
 from agents import market_researcher, financial_analyst, verifier  
@@ -18,6 +19,17 @@ app = FastAPI(
     version="4.2.0",
     description="Professional financial document analysis using CrewAI multi-agent system with optional Celery + Redis for concurrent processing"
 )
+
+# ✅ AUTO-CREATE DATABASE TABLES ON STARTUP (Safe for local + production)
+@app.on_event("startup")
+async def startup_event():
+    """Create database tables on startup if they don't exist"""
+    try:
+        # checkfirst=True makes this safe - only creates missing tables
+        Base.metadata.create_all(bind=engine, checkfirst=True)
+        print("✅ Database tables verified/created successfully")
+    except Exception as e:
+        print(f"⚠️ Database setup warning: {e}")
 
 # ✅ CORS MIDDLEWARE - Updated with production URLs
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
