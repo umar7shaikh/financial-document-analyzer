@@ -7,7 +7,7 @@ from datetime import datetime
 
 # Add database imports
 from database.models import AnalysisModel
-from database.connection import engine, Base
+from database.connection import db_manager
 
 # Import your existing functions
 from agents import market_researcher, financial_analyst, verifier  
@@ -20,14 +20,36 @@ app = FastAPI(
     description="Professional financial document analysis using CrewAI multi-agent system with optional Celery + Redis for concurrent processing"
 )
 
-# ✅ AUTO-CREATE DATABASE TABLES ON STARTUP (Safe for local + production)
+# ✅ AUTO-CREATE DATABASE TABLES ON STARTUP
 @app.on_event("startup")
 async def startup_event():
     """Create database tables on startup if they don't exist"""
     try:
-        # checkfirst=True makes this safe - only creates missing tables
-        Base.metadata.create_all(bind=engine, checkfirst=True)
-        print("✅ Database tables verified/created successfully")
+        with db_manager.get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS financial_analyses (
+                        id SERIAL PRIMARY KEY,
+                        job_id VARCHAR(255) UNIQUE NOT NULL,
+                        user_id INTEGER,
+                        document_path VARCHAR(500),
+                        document_name VARCHAR(255),
+                        status VARCHAR(50) DEFAULT 'pending',
+                        market_research_summary TEXT,
+                        financial_metrics_analysis TEXT,
+                        investment_recommendation TEXT,
+                        risk_assessment TEXT,
+                        verification_report TEXT,
+                        full_analysis_report TEXT,
+                        confidence_rating VARCHAR(20),
+                        processing_duration NUMERIC,
+                        error_message TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        completed_at TIMESTAMP
+                    );
+                """)
+                conn.commit()
+                print("✅ Database tables verified/created successfully")
     except Exception as e:
         print(f"⚠️ Database setup warning: {e}")
 
@@ -368,22 +390,22 @@ async def health_check():
         "status": "healthy",
         "version": "4.2.0",
         "processing_mode": "async (Celery)" if USE_CELERY else "sync (Direct)",
-        "database": "unknown",
-        "redis": "unknown" if not USE_CELERY else "unknown",
-        "celery": "disabled" if not USE_CELERY else "unknown"
+        "database": "unknown"
     }
     
     # Check database
     try:
-        from database.connection import engine
-        with engine.connect() as conn:
-            conn.execute("SELECT 1")
+        with db_manager.get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
         health_status["database"] = "connected"
     except Exception as e:
         health_status["database"] = f"error: {str(e)}"
     
     # Check Redis (only if using Celery)
     if USE_CELERY:
+        health_status["redis"] = "unknown"
+        health_status["celery"] = "unknown"
         try:
             import redis
             redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -393,7 +415,6 @@ async def health_check():
         except Exception as e:
             health_status["redis"] = f"error: {str(e)}"
         
-        # Check Celery
         try:
             from celery_worker import celery_app
             inspect = celery_app.control.inspect()
