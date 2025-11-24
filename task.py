@@ -29,12 +29,17 @@ analyze_financial_document = Task(
         "Limit to 1200 words maximum, focus on decision-critical information."
     ),
     expected_output=(
-        "Financial analysis (1000-1200 words):\n"
-        "- Executive summary (150 words)\n"
-        "- Key financial metrics (5-7 main ratios)\n"
-        "- Investment recommendation with 3 key reasons\n"
-        "- Risk factors (3-5 main risks)\n"
-        "- Market integration (brief)"
+        "Financial analysis with CLEAR SECTION HEADERS (1000-1200 words):\n\n"
+        "## Executive Summary\n"
+        "[150 words summary]\n\n"
+        "## Key Financial Metrics\n"
+        "[5-7 main ratios with analysis]\n\n"
+        "## Investment Recommendation\n"
+        "[Clear BUY/HOLD/SELL with 3 specific reasons]\n\n"
+        "## Risk Assessment\n"
+        "[3-5 main risks with severity ratings]\n\n"
+        "## Market Integration\n"
+        "[Brief context integration]"
     ),
     agent=financial_analyst,
     context=[market_research_task],

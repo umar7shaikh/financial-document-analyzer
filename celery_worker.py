@@ -4,8 +4,10 @@ from celery import Celery
 import time
 from database.models import AnalysisModel
 
+
 # Add current directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 
 # Configure Celery with Redis
 celery_app = Celery('financial_analyzer')
@@ -18,6 +20,7 @@ celery_app.config_from_object({
     'timezone': 'UTC',
     'enable_utc': True,
 })
+
 
 @celery_app.task(bind=True)
 def process_financial_document(self, query: str, file_path: str, analysis_id: str):
@@ -38,7 +41,6 @@ def process_financial_document(self, query: str, file_path: str, analysis_id: st
         
     except Exception as db_error:
         print(f"❌ Failed to create initial record: {db_error}")
-        # Continue anyway - don't let DB issues stop the analysis
     
     # 2. Update status to processing
     try:
@@ -62,21 +64,31 @@ def process_financial_document(self, query: str, file_path: str, analysis_id: st
         # ✅ PROPER CrewAI RESULT EXTRACTION
         print(f"🔍 CrewAI result type: {type(result)}")
         
+        # Initialize variables
+        market_research = ""
+        financial_analysis = ""
+        verification_report = ""
+        full_report = ""
+        
         # Extract results based on CrewAI structure
         if hasattr(result, 'raw'):
             full_report = str(result.raw)
             print(f"📄 Using result.raw: {len(full_report)} characters")
-            # Add this after getting the CrewAI result:
+            
+            # Debug: Show content preview
+            print(f"\n{'='*60}")
             print(f"🔍 ACTUAL CONTENT PREVIEW:")
-            print(f"{'='*50}")
-            print(f"{full_report[:1000]}...")  # First 1000 characters
-            print(f"{'='*50}")
+            print(f"{'='*60}")
+            print(f"{full_report[:1500]}...")
+            print(f"{'='*60}\n")
 
             # Find all possible headers
             import re
-            headers = re.findall(r'(##[^\n]+|#[^\n]+|\*\*[^\n]+\*\*)', full_report)
-            print(f"📋 Found headers: {headers[:10]}")  # First 10 headers
-
+            headers = re.findall(r'(##[^\n]+|#[^\n]+|\*\*[A-Z][^\n]+\*\*)', full_report)
+            print(f"📋 Found headers in report:")
+            for i, header in enumerate(headers[:15], 1):
+                print(f"  {i}. {header}")
+            print(f"{'='*60}\n")
             
             # Try to extract individual task outputs if available
             if hasattr(result, 'tasks_output') and result.tasks_output:
@@ -85,15 +97,11 @@ def process_financial_document(self, query: str, file_path: str, analysis_id: st
                     financial_analysis = str(result.tasks_output[1].raw) if len(result.tasks_output) > 1 else ""
                     verification_report = str(result.tasks_output[2].raw) if len(result.tasks_output) > 2 else ""
                     print(f"📊 Individual task outputs extracted successfully")
+                    print(f"   Task 0 (Market): {len(market_research)} chars")
+                    print(f"   Task 1 (Financial): {len(financial_analysis)} chars")
+                    print(f"   Task 2 (Verification): {len(verification_report)} chars")
                 except Exception as e:
                     print(f"⚠️ Could not extract individual tasks: {e}")
-                    market_research = ""
-                    financial_analysis = ""
-                    verification_report = ""
-            else:
-                market_research = ""
-                financial_analysis = ""
-                verification_report = ""
                 
         elif hasattr(result, 'tasks_output') and result.tasks_output:
             # Extract individual task outputs
@@ -105,32 +113,33 @@ def process_financial_document(self, query: str, file_path: str, analysis_id: st
             
         else:
             full_report = str(result)
-            market_research = extract_section(full_report, 'market research')
-            financial_analysis = extract_section(full_report, 'financial analysis')
-            verification_report = extract_section(full_report, 'verification')
             print(f"📄 Using str(result): {len(full_report)} characters")
         
         # Calculate processing duration
         processing_duration = time.time() - start_time
         
-        # ✅ STRUCTURED DATA EXTRACTION
+        # ✅ STRUCTURED DATA EXTRACTION with fallback
         analysis_data = {
-            'market_research': market_research or extract_section(full_report, 'market research'),
-            'financial_analysis': financial_analysis or extract_section(full_report, 'financial analysis'),
-            'investment_recommendation': extract_section(full_report, 'investment recommendation'),
-            'risk_assessment': extract_section(full_report, 'risk assessment'),
-            'verification_report': verification_report or extract_section(full_report, 'verification'),
-            'full_report': full_report,  # Complete actual result
-            'confidence_rating': extract_confidence_rating(full_report) or 'HIGH'
+            'market_research': market_research or extract_section(full_report, 'market research') or full_report[:500],
+            'financial_analysis': financial_analysis or extract_section(full_report, 'financial analysis') or extract_section(full_report, 'executive summary'),
+            'investment_recommendation': extract_section(financial_analysis or full_report, 'investment recommendation') or extract_section(financial_analysis or full_report, 'recommendation'),
+            'risk_assessment': extract_section(financial_analysis or full_report, 'risk assessment') or extract_section(financial_analysis or full_report, 'risk factors'),
+            'verification_report': verification_report or extract_section(full_report, 'verification') or "Analysis completed successfully.",
+            'full_report': full_report,
+            'confidence_rating': extract_confidence_rating(verification_report or full_report)
         }
         
-        print(f"📊 Extracted sections:")
+        print(f"\n{'='*60}")
+        print(f"📊 EXTRACTED SECTIONS SUMMARY:")
+        print(f"{'='*60}")
         print(f"   Market research: {len(analysis_data['market_research'])} chars")
         print(f"   Financial analysis: {len(analysis_data['financial_analysis'])} chars")
         print(f"   Investment recommendation: {len(analysis_data['investment_recommendation'])} chars")
         print(f"   Risk assessment: {len(analysis_data['risk_assessment'])} chars")
         print(f"   Verification report: {len(analysis_data['verification_report'])} chars")
         print(f"   Full report: {len(analysis_data['full_report'])} chars")
+        print(f"   Confidence rating: {analysis_data['confidence_rating']}")
+        print(f"{'='*60}\n")
         
         # Save to database
         try:
@@ -162,7 +171,7 @@ def process_financial_document(self, query: str, file_path: str, analysis_id: st
             
         return {
             "status": "completed", 
-            "analysis": analysis_data['full_report'],  # Return the extracted content
+            "analysis": full_report,
             "analysis_id": analysis_id,
             "processing_time": processing_duration
         }
@@ -189,8 +198,9 @@ def process_financial_document(self, query: str, file_path: str, analysis_id: st
         self.update_state(state='FAILURE', meta={'error': error_message})
         raise
 
+
 def extract_section(text, section_name):
-    """Enhanced section extraction with more patterns"""
+    """Enhanced section extraction with comprehensive pattern matching"""
     if not text or not section_name:
         return ""
     
@@ -198,71 +208,92 @@ def extract_section(text, section_name):
         text_lower = text.lower()
         section_lower = section_name.lower()
         
-        # Expanded search patterns for different header formats
-        start_markers = [
+        # Comprehensive search patterns
+        patterns = [
+            # Standard markdown headers
             f"## {section_lower}",
-            f"# {section_lower}",  
-            f"**{section_lower}",
-            f"{section_lower}:",
-            f"{section_lower} report",
-            f"{section_lower} analysis", 
-            f"--- {section_lower}",
+            f"# {section_lower}",
+            # Bold markers
+            f"**{section_lower}**",
             f"**{section_lower.title()}**",
-            f"# {section_lower.title()}",
-            # More specific patterns for investment/risk
-            f"investment recommendation",
-            f"investment advice", 
-            f"recommended investment",
-            f"risk analysis",
-            f"risk evaluation",
-            f"risk factors",
-            # Try without spaces
-            section_lower.replace(' ', ''),
-            # Try with underscores  
-            section_lower.replace(' ', '_'),
+            # With colons
+            f"{section_lower}:",
+            f"{section_lower.title()}:",
+            # Common variations
+            f"{section_lower} summary",
+            f"{section_lower} analysis",
+            f"{section_lower} report",
         ]
+        
+        # Add specific patterns for problematic sections
+        if 'investment' in section_lower:
+            patterns.extend([
+                "## investment recommendation",
+                "**investment recommendation**",
+                "investment recommendation:",
+                "recommendation:",
+                "final recommendation",
+                "buy/hold/sell recommendation",
+                "investment advice",
+            ])
+        
+        if 'risk' in section_lower:
+            patterns.extend([
+                "## risk assessment",
+                "**risk assessment**",
+                "risk assessment:",
+                "**risk factors**",
+                "risk factors:",
+                "risk analysis",
+                "key risks:",
+                "main risks:",
+            ])
         
         start_pos = -1
         used_marker = ""
-        for marker in start_markers:
-            pos = text_lower.find(marker)
+        
+        # Search for patterns
+        for pattern in patterns:
+            pos = text_lower.find(pattern)
             if pos != -1:
                 start_pos = pos
-                used_marker = marker
+                used_marker = pattern
                 break
-        
-        if start_pos == -1:
-            # If no exact match, try partial matching
-            for marker in [section_lower[:10], section_lower.split(' ')[0]]:
-                pos = text_lower.find(marker)
-                if pos != -1:
-                    start_pos = pos
-                    used_marker = marker
-                    break
         
         if start_pos == -1:
             return ""
         
-        # Find section end
-        end_markers = ['##', '#', '**', '---', '\n\n']
+        # Find end of section
+        search_start = start_pos + len(used_marker) + 10
+        end_markers = ['\n## ', '\n# ', '\n**', '\n---', '\n\n\n']
         end_pos = len(text)
         
         for marker in end_markers:
-            pos = text.find(marker, start_pos + len(used_marker) + 10)
+            pos = text.find(marker, search_start)
             if pos != -1 and pos < end_pos:
                 end_pos = pos
+                break
         
         extracted = text[start_pos:end_pos].strip()
         
+        # Clean up the section header from extracted content
+        for pattern in patterns:
+            if extracted.lower().startswith(pattern):
+                extracted = extracted[len(pattern):].strip()
+                if extracted.startswith(':'):
+                    extracted = extracted[1:].strip()
+                break
+        
         # Return if substantial content
-        if len(extracted) > len(used_marker) + 30:
+        if len(extracted) > 30:
             return extracted
         else:
             return ""
             
     except Exception as e:
-        print(f"⚠️ Section extraction error for '{section_name}': {e}")
+        print(f"❌ Section extraction error for '{section_name}': {e}")
         return ""
+
 
 def extract_confidence_rating(text):
     """Extract confidence rating from verification report"""
@@ -283,12 +314,12 @@ def extract_confidence_rating(text):
              'LOW CONFIDENCE' in text_upper or 'CONFIDENCE: LOW' in text_upper:
             return 'LOW'
         else:
-            # Default to HIGH for successful analyses
             return 'HIGH'
             
     except Exception as e:
         print(f"⚠️ Confidence rating extraction error: {e}")
         return 'HIGH'
+
 
 if __name__ == '__main__':
     print("🔧 Starting Enhanced Celery Worker with Database Integration...")

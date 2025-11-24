@@ -1,21 +1,40 @@
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware  # ✅ ADD THIS IMPORT
 import uuid
 import os
 from datetime import datetime
 
+
 # Add database imports
 from database.models import AnalysisModel
+
 
 # Import your existing functions
 from agents import market_researcher, financial_analyst, verifier  
 from task import market_research_task, analyze_financial_document, verification
 from crewai import Crew, Process
 
+
 app = FastAPI(
     title="Enhanced Financial Document Analyzer - Celery + Redis System", 
     version="4.1.0",
     description="Professional financial document analysis using CrewAI multi-agent system with Celery + Redis for concurrent processing"
 )
+
+
+# ✅ ADD CORS MIDDLEWARE HERE - RIGHT AFTER app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",  # Vite frontend
+        "http://localhost:3000",  # Alternative React port
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"],  # Allows all headers
+)
+
 
 def run_financial_crew(query: str, file_path: str):
     """Run the complete CrewAI workflow with market research and document analysis"""
@@ -42,6 +61,7 @@ def run_financial_crew(query: str, file_path: str):
     except Exception as e:
         raise Exception(f"CrewAI execution error: {str(e)}")
 
+
 @app.get("/")
 async def root():
     """API information and health check"""
@@ -51,6 +71,7 @@ async def root():
         "version": "4.1.0", 
         # ... rest of your existing code
     }
+
 
 @app.post("/analyze")
 async def analyze_financial_document_queue(
@@ -93,19 +114,17 @@ async def analyze_financial_document_queue(
                 user_id=1,
                 document_path=file_path,
                 document_name=file.filename
-                # ✅ Removed document_size parameter
             )
             print(f"📝 Created database record: {db_record}")
         except Exception as db_error:
             print(f"❌ Database record creation failed: {db_error}")
-            # Don't fail the entire request, but log the error
         
         # Import and queue the Celery task
         from celery_worker import process_financial_document
         task = process_financial_document.delay(query.strip(), file_path, job_id)
         
         return {
-            "🎯 job_id": job_id,  # Use our job_id, not task.id
+            "🎯 job_id": job_id,
             "📄 file_processed": file.filename,
             "💾 file_size_mb": round(len(content) / (1024*1024), 2),
             "⏱️ status": "queued",
@@ -137,6 +156,7 @@ async def analyze_financial_document_queue(
             status_code=500, 
             detail=f"Failed to queue analysis: {str(e)}"
         )
+
 
 @app.get("/status/{job_id}")
 async def get_job_status(job_id: str):
@@ -247,11 +267,12 @@ async def get_job_status(job_id: str):
             detail=f"Error checking job status: {str(e)}"
         )
 
-# Keep your existing health_check endpoint as is
+
 @app.get("/health")
 async def health_check():
     # ... your existing health check code
     pass
+
 
 if __name__ == "__main__":
     import uvicorn

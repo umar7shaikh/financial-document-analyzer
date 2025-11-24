@@ -13,6 +13,8 @@ class FinancialDocumentTool:
     def read_data_tool(path: str = 'data/sample.pdf') -> str:
         """Read PDF content and format for financial analysis"""
         try:
+            print("I am in the read data,the path is ",(path))
+
             if not os.path.exists(path):
                 return f"Error: File not found at path: {path}"
             
@@ -33,6 +35,8 @@ class FinancialDocumentTool:
                 
                 if not full_report.strip():
                     return "Error: No readable text found in PDF"
+                
+                
                 
                 # Add document metadata
                 metadata = f"""
@@ -89,3 +93,5 @@ def search_web(query: str) -> str:
             
     except Exception as e:
         return f"Search error occurred: {str(e)}"
+    
+    
