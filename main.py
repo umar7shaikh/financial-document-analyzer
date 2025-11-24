@@ -1,46 +1,45 @@
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware  # ✅ ADD THIS IMPORT
+from fastapi.middleware.cors import CORSMiddleware
 import uuid
 import os
+import time
 from datetime import datetime
-
 
 # Add database imports
 from database.models import AnalysisModel
-
 
 # Import your existing functions
 from agents import market_researcher, financial_analyst, verifier  
 from task import market_research_task, analyze_financial_document, verification
 from crewai import Crew, Process
 
-
 app = FastAPI(
-    title="Enhanced Financial Document Analyzer - Celery + Redis System", 
-    version="4.1.0",
-    description="Professional financial document analysis using CrewAI multi-agent system with Celery + Redis for concurrent processing"
+    title="Enhanced Financial Document Analyzer - Hybrid System", 
+    version="4.2.0",
+    description="Professional financial document analysis using CrewAI multi-agent system with optional Celery + Redis for concurrent processing"
 )
 
-
-# ✅ ADD CORS MIDDLEWARE HERE - RIGHT AFTER app = FastAPI()
+# ✅ CORS MIDDLEWARE
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",  # Vite frontend
-        "http://localhost:3000",  # Alternative React port
+        "http://localhost:5173",
+        "http://localhost:3000",
         "http://127.0.0.1:5173",
+        "*"  # Remove in production after testing
     ],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, PUT, DELETE, etc.)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+# 🔀 HYBRID MODE TOGGLE
+USE_CELERY = os.getenv("USE_CELERY", "false").lower() == "true"
 
 def run_financial_crew(query: str, file_path: str):
     """Run the complete CrewAI workflow with market research and document analysis"""
     
     try:
-        # Create the financial analysis crew
         financial_crew = Crew(
             agents=[market_researcher, financial_analyst, verifier],
             tasks=[market_research_task, analyze_financial_document, verification],
@@ -49,7 +48,6 @@ def run_financial_crew(query: str, file_path: str):
             memory=False
         )
         
-        # Execute the crew with context
         inputs = {
             'query': query,
             'file_path': file_path
@@ -61,17 +59,29 @@ def run_financial_crew(query: str, file_path: str):
     except Exception as e:
         raise Exception(f"CrewAI execution error: {str(e)}")
 
-
 @app.get("/")
 async def root():
     """API information and health check"""
     return {
-        "message": "🚀 Enhanced Financial Document Analyzer - Celery + Redis System",
+        "message": "🚀 Enhanced Financial Document Analyzer - Hybrid System",
         "status": "✅ Fully Operational",
-        "version": "4.1.0", 
-        # ... rest of your existing code
+        "version": "4.2.0",
+        "processing_mode": "Async (Celery)" if USE_CELERY else "Sync (Direct)",
+        "features": {
+            "multi_agent_analysis": True,
+            "market_research": True,
+            "financial_metrics": True,
+            "investment_recommendations": True,
+            "risk_assessment": True,
+            "verification": True
+        },
+        "endpoints": {
+            "analyze": "/analyze (POST)",
+            "status": "/status/{job_id} (GET)",
+            "health": "/health (GET)",
+            "docs": "/docs"
+        }
     }
-
 
 @app.post("/analyze")
 async def analyze_financial_document_queue(
@@ -81,7 +91,7 @@ async def analyze_financial_document_queue(
         description="Specific analysis question or request"
     )
 ):
-    """Queue financial analysis for background processing using Celery"""
+    """Process financial analysis - async (Celery) or sync mode based on USE_CELERY env var"""
     
     # Validate file type
     if not file.filename.lower().endswith('.pdf'):
@@ -107,7 +117,7 @@ async def analyze_financial_document_queue(
         if not query or query.strip() == "":
             query = "Provide comprehensive financial analysis with current market context and investment recommendations"
         
-        # 🆕 CREATE DATABASE RECORD FIRST
+        # 🆕 CREATE DATABASE RECORD
         try:
             db_record = AnalysisModel.create_analysis_record(
                 job_id=job_id,
@@ -119,33 +129,120 @@ async def analyze_financial_document_queue(
         except Exception as db_error:
             print(f"❌ Database record creation failed: {db_error}")
         
-        # Import and queue the Celery task
-        from celery_worker import process_financial_document
-        task = process_financial_document.delay(query.strip(), file_path, job_id)
+        # 🔀 HYBRID MODE: Use Celery if enabled, otherwise process synchronously
+        if USE_CELERY:
+            # ===== ASYNC MODE: Queue with Celery =====
+            try:
+                from celery_worker import process_financial_document
+                task = process_financial_document.delay(query.strip(), file_path, job_id)
+                
+                return {
+                    "🎯 job_id": job_id,
+                    "📄 file_processed": file.filename,
+                    "💾 file_size_mb": round(len(content) / (1024*1024), 2),
+                    "⏱️ status": "queued",
+                    "🚀 message": "Analysis queued with Celery + Redis for background processing!",
+                    "⏰ estimated_time": "5-15 minutes",
+                    "🔍 check_status": f"/status/{job_id}",
+                    "processing_mode": "async",
+                    "next_steps": [
+                        f"1. Check status: GET /status/{job_id}",
+                        "2. Results will include comprehensive analysis when complete"
+                    ]
+                }
+            except Exception as celery_error:
+                print(f"❌ Celery queueing failed: {celery_error}")
+                raise HTTPException(status_code=500, detail=f"Failed to queue analysis: {str(celery_error)}")
         
-        return {
-            "🎯 job_id": job_id,
-            "📄 file_processed": file.filename,
-            "💾 file_size_mb": round(len(content) / (1024*1024), 2),
-            "⏱️ status": "queued",
-            "🚀 message": "Analysis queued with Celery + Redis for background processing!",
-            "⏰ estimated_time": "5-15 minutes",
-            "🔍 check_status": f"/status/{job_id}",
-            "database_record": "created" if 'db_record' in locals() else "failed",
-            "system_info": {
-                "queue_system": "Celery + Redis (Windows Compatible)",
-                "processing_type": "Background/Asynchronous",
-                "agents": ["Market Research", "Financial Analysis", "Verification"],
-                "concurrent_support": True
-            },
-            "next_steps": [
-                f"1. Check status: GET /status/{job_id}",
-                "2. Results will include comprehensive analysis when complete"
-            ]
-        }
+        else:
+            # ===== SYNC MODE: Process immediately (no Celery) =====
+            start_time = time.time()
+            
+            try:
+                # Update status to processing
+                AnalysisModel.update_analysis_status(job_id, 'processing')
+                print(f"🔄 Processing synchronously: {job_id}")
+                
+                # Run CrewAI analysis
+                result = run_financial_crew(query.strip(), file_path)
+                
+                # Extract results (same logic as celery_worker)
+                full_report = str(result.raw) if hasattr(result, 'raw') else str(result)
+                
+                # Extract individual task outputs
+                market_research = ""
+                financial_analysis = ""
+                verification_report = ""
+                
+                if hasattr(result, 'tasks_output') and result.tasks_output:
+                    try:
+                        market_research = str(result.tasks_output[0].raw) if len(result.tasks_output) > 0 else ""
+                        financial_analysis = str(result.tasks_output[1].raw) if len(result.tasks_output) > 1 else ""
+                        verification_report = str(result.tasks_output[2].raw) if len(result.tasks_output) > 2 else ""
+                    except Exception as e:
+                        print(f"⚠️ Could not extract individual tasks: {e}")
+                
+                # Import extraction functions from celery_worker
+                from celery_worker import extract_section, extract_confidence_rating
+                
+                # Structure analysis data
+                analysis_data = {
+                    'market_research': market_research or extract_section(full_report, 'market research') or full_report[:500],
+                    'financial_analysis': financial_analysis or extract_section(full_report, 'financial analysis') or extract_section(full_report, 'executive summary'),
+                    'investment_recommendation': extract_section(financial_analysis or full_report, 'investment recommendation') or extract_section(financial_analysis or full_report, 'recommendation'),
+                    'risk_assessment': extract_section(financial_analysis or full_report, 'risk assessment') or extract_section(financial_analysis or full_report, 'risk factors'),
+                    'verification_report': verification_report or extract_section(full_report, 'verification') or "Analysis completed successfully.",
+                    'full_report': full_report,
+                    'confidence_rating': extract_confidence_rating(verification_report or full_report)
+                }
+                
+                processing_duration = time.time() - start_time
+                
+                # Save to database
+                try:
+                    AnalysisModel.store_complete_analysis(job_id, analysis_data, processing_duration)
+                    print(f"💾 Successfully saved analysis to database")
+                except Exception as db_error:
+                    print(f"❌ Database save error: {db_error}")
+                
+                # Clean up file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                
+                return {
+                    "🎯 job_id": job_id,
+                    "📄 file_processed": file.filename,
+                    "⏱️ status": "completed",
+                    "✅ message": "Analysis completed successfully (synchronous mode)!",
+                    "📊 analysis_result": {
+                        "market_research": analysis_data['market_research'],
+                        "financial_analysis": analysis_data['financial_analysis'],
+                        "investment_recommendation": analysis_data['investment_recommendation'],
+                        "risk_assessment": analysis_data['risk_assessment'],
+                        "verification_report": analysis_data['verification_report'],
+                        "confidence_rating": analysis_data['confidence_rating']
+                    },
+                    "⏰ processing_time": f"{processing_duration:.2f} seconds",
+                    "processing_mode": "sync"
+                }
+                
+            except Exception as processing_error:
+                # Update database with error
+                try:
+                    AnalysisModel.update_analysis_status(job_id, 'failed', str(processing_error))
+                except:
+                    pass
+                
+                # Clean up file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                
+                raise HTTPException(status_code=500, detail=f"Analysis failed: {str(processing_error)}")
         
+    except HTTPException:
+        raise
     except Exception as e:
-        # Clean up file if job queuing fails
+        # Clean up file if anything fails
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
@@ -154,9 +251,8 @@ async def analyze_financial_document_queue(
         
         raise HTTPException(
             status_code=500, 
-            detail=f"Failed to queue analysis: {str(e)}"
+            detail=f"Failed to process analysis: {str(e)}"
         )
-
 
 @app.get("/status/{job_id}")
 async def get_job_status(job_id: str):
@@ -206,78 +302,98 @@ async def get_job_status(job_id: str):
                     return {
                         "🎯 job_id": job_id,
                         "⏱️ status": db_status,
-                        "🔄 message": f"Analysis {db_status}... CrewAI agents working",
-                        "🤖 current_stage": "Multi-agent processing",
-                        "agents_active": ["Market Research", "Financial Analysis", "Verification"]
+                        "🔄 message": f"Analysis {db_status}...",
+                        "🤖 current_stage": "Multi-agent processing"
                     }
             
         except Exception as db_error:
             print(f"Database status check failed: {db_error}")
         
-        # Fallback to Celery status if database check fails
-        from celery_worker import celery_app
-        result = celery_app.AsyncResult(job_id)
-        
-        # Build status response based on Celery task state
-        status_info = {
-            "🎯 job_id": job_id,
-            "⏱️ status": result.state.lower(),
-        }
-        
-        if result.state == 'PENDING':
-            status_info.update({
-                "📋 message": "Task is waiting in queue...",
-                "queue_info": "Analysis will start automatically"
-            })
-            
-        elif result.state == 'PROGRESS':
-            status_info.update({
-                "🔄 message": "Analysis in progress... CrewAI agents working",
-                "🤖 current_stage": "Multi-agent processing",
-                "agents_active": ["Market Research", "Financial Analysis", "Verification"],
-                "progress_info": result.info
-            })
-            
-        elif result.state == 'SUCCESS':
-            status_info.update({
-                "✅ message": "Analysis completed successfully!",
-                "📊 analysis_result": result.result,
-                "processing_summary": {
-                    "agents_executed": 3,
-                    "tasks_completed": 3,
-                    "analysis_type": "Comprehensive Financial Analysis"
+        # Fallback to Celery status if database check fails (only if USE_CELERY)
+        if USE_CELERY:
+            try:
+                from celery_worker import celery_app
+                result = celery_app.AsyncResult(job_id)
+                
+                status_info = {
+                    "🎯 job_id": job_id,
+                    "⏱️ status": result.state.lower(),
                 }
-            })
-            
-        elif result.state == 'FAILURE':
-            status_info.update({
-                "❌ message": "Analysis failed",
-                "🐛 error_details": str(result.info),
-                "retry_suggestion": "You can upload the document again for retry"
-            })
+                
+                if result.state == 'PENDING':
+                    status_info["📋 message"] = "Task is waiting in queue..."
+                elif result.state == 'PROGRESS':
+                    status_info["🔄 message"] = "Analysis in progress..."
+                elif result.state == 'SUCCESS':
+                    status_info["✅ message"] = "Analysis completed successfully!"
+                    status_info["📊 analysis_result"] = result.result
+                elif result.state == 'FAILURE':
+                    status_info["❌ message"] = "Analysis failed"
+                    status_info["🐛 error_details"] = str(result.info)
+                
+                return status_info
+            except:
+                pass
         
-        else:
-            status_info["🔄 message"] = f"Task state: {result.state}"
+        # Job not found
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
         
-        return status_info
-        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500, 
             detail=f"Error checking job status: {str(e)}"
         )
 
-
 @app.get("/health")
 async def health_check():
-    # ... your existing health check code
-    pass
-
+    """Health check endpoint"""
+    health_status = {
+        "status": "healthy",
+        "version": "4.2.0",
+        "processing_mode": "async (Celery)" if USE_CELERY else "sync (Direct)",
+        "database": "unknown",
+        "redis": "unknown" if not USE_CELERY else "unknown",
+        "celery": "disabled" if not USE_CELERY else "unknown"
+    }
+    
+    # Check database
+    try:
+        from database.connection import engine
+        with engine.connect() as conn:
+            conn.execute("SELECT 1")
+        health_status["database"] = "connected"
+    except Exception as e:
+        health_status["database"] = f"error: {str(e)}"
+    
+    # Check Redis (only if using Celery)
+    if USE_CELERY:
+        try:
+            import redis
+            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            r = redis.from_url(redis_url)
+            r.ping()
+            health_status["redis"] = "connected"
+        except Exception as e:
+            health_status["redis"] = f"error: {str(e)}"
+        
+        # Check Celery
+        try:
+            from celery_worker import celery_app
+            inspect = celery_app.control.inspect()
+            stats = inspect.stats()
+            health_status["celery"] = "running" if stats else "no workers"
+        except Exception as e:
+            health_status["celery"] = f"error: {str(e)}"
+    
+    return health_status
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Starting Enhanced Financial Document Analyzer with Celery + Redis...")
-    print("📊 CrewAI Multi-Agent System Ready!")
-    print("🔄 Celery Queue System for Concurrent Processing (Windows Compatible)")
-    print("🔍 Market Research & Document Analysis Available")
+    mode = "Celery + Redis (Async)" if USE_CELERY else "Direct Processing (Sync)"
+    print(f"🚀 Starting Enhanced Financial Document Analyzer...")
+    print(f"📊 CrewAI Multi-Agent System Ready!")
+    print(f"🔄 Processing Mode: {mode}")
+    print(f"🔍 Market Research & Document Analysis Available")
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
